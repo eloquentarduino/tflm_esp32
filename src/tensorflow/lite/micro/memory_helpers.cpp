@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,11 +18,10 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
-#include "third_party/flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
 #include "tensorflow/lite/c/common.h"
-#include "tensorflow/lite/core/api/error_reporter.h"
-#include "tensorflow/lite/core/api/flatbuffer_conversions.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+#include "tensorflow/lite/micro/tflite_bridge/flatbuffer_conversions_bridge.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
@@ -49,6 +48,9 @@ size_t AlignSizeUp(size_t size, size_t alignment) {
 TfLiteStatus TfLiteTypeSizeOf(TfLiteType type, size_t* size) {
   switch (type) {
     case kTfLiteFloat16:
+      *size = sizeof(int16_t);
+      break;
+    case kTfLiteBFloat16:
       *size = sizeof(int16_t);
       break;
     case kTfLiteFloat32:
@@ -90,6 +92,9 @@ TfLiteStatus TfLiteTypeSizeOf(TfLiteType type, size_t* size) {
     case kTfLiteComplex128:
       *size = sizeof(double) * 2;
       break;
+    case kTfLiteInt4:
+      *size = sizeof(int8_t);
+      break;
     default:
       return kTfLiteError;
   }
@@ -97,20 +102,19 @@ TfLiteStatus TfLiteTypeSizeOf(TfLiteType type, size_t* size) {
 }
 
 TfLiteStatus BytesRequiredForTensor(const tflite::Tensor& flatbuffer_tensor,
-                                    size_t* bytes, size_t* type_size,
-                                    ErrorReporter* error_reporter) {
+                                    size_t* bytes, size_t* type_size) {
   int element_count = 1;
   // If flatbuffer_tensor.shape == nullptr, then flatbuffer_tensor is a scalar
   // so has 1 element.
   if (flatbuffer_tensor.shape() != nullptr) {
-    for (size_t n = 0; n < flatbuffer_tensor.shape()->Length(); ++n) {
+    for (size_t n = 0; n < flatbuffer_tensor.shape()->size(); ++n) {
       element_count *= flatbuffer_tensor.shape()->Get(n);
     }
   }
 
   TfLiteType tf_lite_type;
-  TF_LITE_ENSURE_STATUS(ConvertTensorType(flatbuffer_tensor.type(),
-                                          &tf_lite_type, error_reporter));
+  TF_LITE_ENSURE_STATUS(
+      ConvertTensorType(flatbuffer_tensor.type(), &tf_lite_type));
   TF_LITE_ENSURE_STATUS(TfLiteTypeSizeOf(tf_lite_type, type_size));
   *bytes = element_count * (*type_size);
   return kTfLiteOk;

@@ -19,6 +19,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/types.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/micro/kernels/kernel_util.h"
+#include "tensorflow/lite/micro/micro_log.h"
 
 namespace tflite {
 namespace {
@@ -45,7 +46,7 @@ struct TransposeContext {
   TfLiteTensor* output;
 };
 
-TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus TransposePrepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
 
@@ -71,7 +72,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   return kTfLiteOk;
 }
 
-TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus TransposeEval(TfLiteContext* context, TfLiteNode* node) {
   const TfLiteEvalTensor* perm_tensor =
       tflite::micro::GetEvalInput(context, node, kPermTensor);
   const int32_t* perm_data = perm_tensor->data.i32;
@@ -103,10 +104,10 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
                                tflite::micro::GetTensorData<int8_t>(output));
       break;
     default:
-      TF_LITE_KERNEL_LOG(context,
-                         "Type %s is currently not supported by Transpose. "
-                         "Only float32 and int8 is supported",
-                         TfLiteTypeGetName(input->type));
+      MicroPrintf(
+          "Type %s is currently not supported by Transpose. "
+          "Only float32 and int8 is supported",
+          TfLiteTypeGetName(input->type));
       return kTfLiteError;
   }
 
@@ -115,7 +116,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 
 }  // namespace
 
-TfLiteRegistration Register_TRANSPOSE() {
-  return tflite::micro::RegisterOp(nullptr, Prepare, Eval);
+TFLMRegistration Register_TRANSPOSE() {
+  return tflite::micro::RegisterOp(nullptr, TransposePrepare, TransposeEval);
 }
 }  // namespace tflite

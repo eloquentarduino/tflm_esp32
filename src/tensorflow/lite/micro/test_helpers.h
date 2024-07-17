@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,14 +16,17 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_MICRO_TEST_HELPERS_H_
 #define TENSORFLOW_LITE_MICRO_TEST_HELPERS_H_
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
-#include "third_party/flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
-#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_utils.h"
 #include "tensorflow/lite/portable_type_to_tflitetype.h"
 #include "tensorflow/lite/schema/schema_generated.h"
@@ -32,6 +35,7 @@ namespace tflite {
 namespace testing {
 
 constexpr int kOfflinePlannerHeaderSize = 3;
+using TestingOpResolver = tflite::MicroMutableOpResolver<10>;
 
 struct NodeConnection_ {
   std::initializer_list<int32_t> input;
@@ -55,8 +59,8 @@ class SimpleStatefulOp {
   };
 
  public:
-  static const TfLiteRegistration* getRegistration();
-  static TfLiteRegistration* GetMutableRegistration();
+  static const TFLMRegistration* getRegistration();
+  static TFLMRegistration* GetMutableRegistration();
   static void* Init(TfLiteContext* context, const char* buffer, size_t length);
   static TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node);
   static TfLiteStatus Invoke(TfLiteContext* context, TfLiteNode* node);
@@ -64,8 +68,8 @@ class SimpleStatefulOp {
 
 class MockCustom {
  public:
-  static const TfLiteRegistration* getRegistration();
-  static TfLiteRegistration* GetMutableRegistration();
+  static const TFLMRegistration* getRegistration();
+  static TFLMRegistration* GetMutableRegistration();
   static void* Init(TfLiteContext* context, const char* buffer, size_t length);
   static void Free(TfLiteContext* context, void* buffer);
   static TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node);
@@ -78,8 +82,8 @@ class MockCustom {
 // the sum of the inputs.
 class MultipleInputs {
  public:
-  static const TfLiteRegistration* getRegistration();
-  static TfLiteRegistration* GetMutableRegistration();
+  static const TFLMRegistration* getRegistration();
+  static TFLMRegistration* GetMutableRegistration();
   static void* Init(TfLiteContext* context, const char* buffer, size_t length);
   static void Free(TfLiteContext* context, void* buffer);
   static TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node);
@@ -91,8 +95,8 @@ class MultipleInputs {
 // A simple no-op operator.
 class NoOp {
  public:
-  static const TfLiteRegistration* getRegistration();
-  static TfLiteRegistration* GetMutableRegistration();
+  static const TFLMRegistration* getRegistration();
+  static TFLMRegistration* GetMutableRegistration();
   static void* Init(TfLiteContext* context, const char* buffer, size_t length);
   static void Free(TfLiteContext* context, void* buffer);
   static TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node);
@@ -102,7 +106,7 @@ class NoOp {
 };
 
 // Returns an Op Resolver that can be used in the testing code.
-AllOpsResolver GetOpResolver();
+TfLiteStatus GetTestingOpResolver(TestingOpResolver& op_resolver);
 
 // Returns a simple example flatbuffer TensorFlow Lite model. Contains 1 input,
 // 1 layer of weights, 1 output Tensor, and 1 operator.
@@ -157,6 +161,9 @@ const Model* GetSimpleStatefulModel();
 // Returns a flatbuffer model with "if" and two subgraphs.
 const Model* GetSimpleModelWithSubgraphsAndIf();
 
+// Returns a flatbuffer model with "if" and two subgraphs one of which is empty.
+const Model* GetSimpleModelWithIfAndEmptySubgraph();
+
 // Returns a flatbuffer model with "while" and three subgraphs.
 const Model* GetSimpleModelWithSubgraphsAndWhile();
 
@@ -184,45 +191,59 @@ CreateFlatbufferBuffers();
 // Performs a simple string comparison without requiring standard C library.
 int TestStrcmp(const char* a, const char* b);
 
-// Wrapper to forward kernel errors to the interpreter's error reporter.
-void ReportOpError(struct TfLiteContext* context, const char* format, ...);
-
 void PopulateContext(TfLiteTensor* tensors, int tensors_size,
                      TfLiteContext* context);
 
 // Create a TfLiteIntArray from an array of ints.  The first element in the
 // supplied array must be the size of the array expressed as an int.
-TfLiteIntArray* IntArrayFromInts(int* int_array);
+TfLiteIntArray* IntArrayFromInts(const int* int_array);
 
 // Create a TfLiteFloatArray from an array of floats.  The first element in the
 // supplied array must be the size of the array expressed as a float.
 TfLiteFloatArray* FloatArrayFromFloats(const float* floats);
 
+// Assumes that `src_tensor` is a buffer where each element is a 4-bit value
+// stored in 8-bit.
+// Returns a new buffer that is packed densely with 2 4-bit values in a byte.
+// The packing format is low-bits-first, i.e. the lower nibble of a byte is
+// filled first, followed by the upper nibble.
+void PackInt4ValuesDenselyInPlace(uint8_t* src_buffer, int buffer_size);
+
 template <typename T>
 TfLiteTensor CreateTensor(const T* data, TfLiteIntArray* dims,
-                          const bool is_variable = false) {
+                          const bool is_variable = false,
+                          TfLiteType type = kTfLiteNoType) {
   TfLiteTensor result;
   result.dims = dims;
   result.params = {};
   result.quantization = {kTfLiteNoQuantization, nullptr};
   result.is_variable = is_variable;
   result.allocation_type = kTfLiteMemNone;
-  result.type = typeToTfLiteType<T>();
-  // Const cast is used to allow passing in const and non-const arrays within a
-  // single CreateTensor method. A Const array should be used for immutable
-  // input tensors and non-const array should be used for mutable and output
-  // tensors.
   result.data.data = const_cast<T*>(data);
-  result.quantization = {kTfLiteAffineQuantization, nullptr};
   result.bytes = ElementCount(*dims) * sizeof(T);
+  result.data.data = const_cast<T*>(data);
+
+  if (type == kTfLiteInt4) {
+    result.type = kTfLiteInt4;
+    PackInt4ValuesDenselyInPlace(tflite::GetTensorData<uint8_t>(&result),
+                                 ElementCount(*dims));
+    result.bytes = ((ElementCount(*dims) + 1) / 2);
+  } else {
+    // Const cast is used to allow passing in const and non-const arrays within
+    // a single CreateTensor method. A Const array should be used for immutable
+    // input tensors and non-const array should be used for mutable and output
+    // tensors.
+    result.type = typeToTfLiteType<T>();
+  }
   return result;
 }
 
 template <typename T>
 TfLiteTensor CreateQuantizedTensor(const T* data, TfLiteIntArray* dims,
                                    const float scale, const int zero_point = 0,
-                                   const bool is_variable = false) {
-  TfLiteTensor result = CreateTensor(data, dims, is_variable);
+                                   const bool is_variable = false,
+                                   TfLiteType type = kTfLiteNoType) {
+  TfLiteTensor result = CreateTensor(data, dims, is_variable, type);
   result.params = {scale, zero_point};
   result.quantization = {kTfLiteAffineQuantization, nullptr};
   return result;
@@ -231,10 +252,12 @@ TfLiteTensor CreateQuantizedTensor(const T* data, TfLiteIntArray* dims,
 template <typename T>
 TfLiteTensor CreateQuantizedTensor(const float* input, T* quantized,
                                    TfLiteIntArray* dims, float scale,
-                                   int zero_point, bool is_variable = false) {
+                                   int zero_point, bool is_variable = false,
+                                   TfLiteType type = kTfLiteNoType) {
   int input_size = ElementCount(*dims);
   tflite::Quantize(input, quantized, input_size, scale, zero_point);
-  return CreateQuantizedTensor(quantized, dims, scale, zero_point, is_variable);
+  return CreateQuantizedTensor(quantized, dims, scale, zero_point, is_variable,
+                               type);
 }
 
 TfLiteTensor CreateQuantizedBiasTensor(const float* data, int16_t* quantized,
@@ -272,12 +295,13 @@ TfLiteTensor CreatePerChannelQuantizedBiasTensor(
 TfLiteTensor CreateSymmetricPerChannelQuantizedTensor(
     const float* input, int8_t* quantized, TfLiteIntArray* dims, float* scales,
     int* zero_points, TfLiteAffineQuantization* affine_quant,
-    int quantized_dimension, bool is_variable = false);
+    int quantized_dimension, bool is_variable = false,
+    TfLiteType tensor_weight_type = kTfLiteNoType);
 
 // Returns the number of tensors in the default subgraph for a tflite::Model.
 size_t GetModelTensorCount(const Model* model);
 
-// Derives the quantization scaling factor from a min and max range.
+// Derives the asymmetric quantization scaling factor from a min and max range.
 template <typename T>
 inline float ScaleFromMinMax(const float min, const float max) {
   return (max - min) /
@@ -285,11 +309,24 @@ inline float ScaleFromMinMax(const float min, const float max) {
                             std::numeric_limits<T>::min());
 }
 
+// Derives the symmetric quantization scaling factor from a min and max range.
+template <typename T>
+inline float SymmetricScaleFromMinMax(const float min, const float max) {
+  const int32_t kScale =
+      std::numeric_limits<typename std::make_signed<T>::type>::max();
+  const float range = std::max(std::abs(min), std::abs(max));
+  if (range == 0) {
+    return 1.0f;
+  } else {
+    return range / kScale;
+  }
+}
+
 // Derives the quantization zero point from a min and max range.
 template <typename T>
 inline int ZeroPointFromMinMax(const float min, const float max) {
   return static_cast<int>(std::numeric_limits<T>::min()) +
-         static_cast<int>(-min / ScaleFromMinMax<T>(min, max) + 0.5f);
+         static_cast<int>(roundf(-min / ScaleFromMinMax<T>(min, max)));
 }
 
 }  // namespace testing

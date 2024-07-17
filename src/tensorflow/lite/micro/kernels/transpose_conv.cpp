@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow/lite/kernels/internal/reference/transpose_conv.h"
 
+#include <cstddef>
+#include <cstdint>
+
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/internal/common.h"
@@ -24,6 +27,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/padding.h"
 #include "tensorflow/lite/micro/kernels/kernel_util.h"
+#include "tensorflow/lite/micro/micro_log.h"
 
 namespace tflite {
 namespace {
@@ -47,8 +51,9 @@ struct OpData {
   // A scratch buffer is required for quantized implementations.
   int scratch_buffer_index;
 
-  // TODO(b/192090531): Remove this once all 8x16 transpose conv models use
-  // 64-bit biases.
+  // Index to the converted 64-bit bias buffer from 16-bit bias. This is
+  // required to handle 16x8 transpose convolutions where a 16-bit bias is
+  // provided, whereas the kernel expects 64-bit biases.
   int bias_converted_buffer_index;
 
   // Multiplier and shift arrays are required for the int8 implementation.
@@ -122,7 +127,9 @@ TfLiteStatus CalculateOpData(TfLiteContext* context, TfLiteNode* node,
     if (input->type == kTfLiteInt16) {
       TFLITE_DCHECK(filter->type == kTfLiteInt8);
       TFLITE_DCHECK(output->type == kTfLiteInt16);
-      if (bias->type == kTfLiteInt16) {
+      // Handle the case where the bias is 16 bits for 16x8 transpose
+      // convolution where the kernel actually expects 64-bit biases.
+      if (bias != nullptr && bias->type == kTfLiteInt16) {
         TFLITE_DCHECK(
             context->RequestScratchBufferInArena(
                 context, GetTensorShape(bias).FlatSize() * sizeof(std::int64_t),
@@ -140,12 +147,13 @@ TfLiteStatus CalculateOpData(TfLiteContext* context, TfLiteNode* node,
   return kTfLiteOk;
 }
 
-void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+void* TransposeConvInit(TfLiteContext* context, const char* buffer,
+                        size_t length) {
   TFLITE_DCHECK(context->AllocatePersistentBuffer != nullptr);
   return context->AllocatePersistentBuffer(context, sizeof(OpData));
 }
 
-TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus TransposeConvPrepare(TfLiteContext* context, TfLiteNode* node) {
   TFLITE_DCHECK(node->user_data != nullptr);
   TFLITE_DCHECK(node->builtin_data != nullptr);
 
@@ -164,6 +172,12 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   TfLiteTensor* filter =
       micro_context->AllocateTempInputTensor(node, kFilterTensor);
   TF_LITE_ENSURE(context, filter != nullptr);
+
+  TF_LITE_ENSURE_MSG(
+      context,
+      input->type == filter->type ||
+          (input->type == kTfLiteInt16 && filter->type == kTfLiteInt8),
+      "Hybrid models are not supported on TFLite Micro.");
 
   // Get height and width of the output.
   const int width = SizeOfDimension(output, 2);
@@ -236,7 +250,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   return kTfLiteOk;
 }
 
-TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus TransposeConvEval(TfLiteContext* context, TfLiteNode* node) {
   const TfLiteEvalTensor* input =
       tflite::micro::GetEvalInput(context, node, kInputTensor);
   const TfLiteEvalTensor* filter =
@@ -252,16 +266,18 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   const OpData& data = *(static_cast<const OpData*>(node->user_data));
 
   TF_LITE_ENSURE_EQ(context, input->type, output->type);
-  TF_LITE_ENSURE_MSG(
-      context,
-      input->type == filter->type ||
-          (input->type == kTfLiteInt16 && filter->type == kTfLiteInt8),
-      "Hybrid models are not supported on TFLite Micro.");
 
   switch (input->type) {  // Already know in/out types are same.
     case kTfLiteFloat32: {
+      const auto& params =
+          *(reinterpret_cast<TfLiteConvParams*>(node->builtin_data));
+      ConvParams op_params = data.params;
+      CalculateActivationRange(params.activation,
+                               &op_params.float_activation_min,
+                               &op_params.float_activation_max);
+
       reference_ops::TransposeConv(
-          data.params, tflite::micro::GetTensorShape(input),
+          op_params, tflite::micro::GetTensorShape(input),
           tflite::micro::GetTensorData<float>(input),
           tflite::micro::GetTensorShape(filter),
           tflite::micro::GetTensorData<float>(filter),
@@ -289,12 +305,10 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
       break;
     }
     case kTfLiteInt16: {
-      std::int64_t* scratch_buffer = static_cast<int64_t*>(
+      auto* scratch_buffer = static_cast<int64_t*>(
           context->GetScratchBuffer(context, data.scratch_buffer_index));
-      // TODO(b/192090531): Remove this once all 8x16 transpose conv models use
-      // 64-bit biases.
       if (bias != nullptr && bias->type == kTfLiteInt16) {
-        std::int64_t* bias_converted_buffer =
+        auto* bias_converted_buffer =
             static_cast<int64_t*>(context->GetScratchBuffer(
                 context, data.bias_converted_buffer_index));
         for (int i = 0; i < tflite::micro::GetTensorShape(bias).FlatSize();
@@ -327,8 +341,8 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
       break;
     }
     default:
-      TF_LITE_KERNEL_LOG(context, "Type %s (%d) not supported.",
-                         TfLiteTypeGetName(input->type), input->type);
+      MicroPrintf("Type %s (%d) not supported.", TfLiteTypeGetName(input->type),
+                  input->type);
       return kTfLiteError;
   }
   return kTfLiteOk;
@@ -336,8 +350,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 
 }  // namespace
 
-TfLiteRegistration Register_TRANSPOSE_CONV() {
-  return tflite::micro::RegisterOp(Init, Prepare, Eval);
+TFLMRegistration Register_TRANSPOSE_CONV() {
+  return tflite::micro::RegisterOp(TransposeConvInit, TransposeConvPrepare,
+                                   TransposeConvEval);
 }
 
 }  // namespace tflite

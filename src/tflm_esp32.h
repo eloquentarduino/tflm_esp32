@@ -3,14 +3,11 @@
 #define ELOQUENT_TFLM
 
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/system_setup.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
 using tflite::Model;
-using tflite::ErrorReporter;
-using tflite::MicroErrorReporter;
 using tflite::MicroMutableOpResolver;
 using tflite::MicroInterpreter;
 
@@ -28,8 +25,7 @@ namespace eloq {
          */
         template<uint8_t numOps>
         MicroInterpreter* newInterpreter(MicroMutableOpResolver<numOps> *resolver, const Model *model, uint8_t* arena, size_t tensorArenaSize) {
-            static ErrorReporter *reporter = new MicroErrorReporter();
-            return new MicroInterpreter(model, *resolver, arena, tensorArenaSize, reporter);
+            return new MicroInterpreter(model, *resolver, arena, tensorArenaSize);
         }
     }
 }

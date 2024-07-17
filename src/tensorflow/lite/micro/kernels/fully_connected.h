@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ limitations under the License.
 #include <cstdint>
 
 #include "tensorflow/lite/c/builtin_op_data.h"
-#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/internal/types.h"
+#include "tensorflow/lite/micro/micro_common.h"
 
 namespace tflite {
 
@@ -38,6 +38,14 @@ struct OpDataFullyConnected {
   int32_t input_zero_point;
   int32_t filter_zero_point;
   int32_t output_zero_point;
+
+// TODO(b/258710417): enable by default once optimized fully-connected works for
+// all targets.
+#if !defined(HEXAGON)
+  // A buffer used to store unpacked filter values. This is used if the source
+  // tensor is of n-bit precision that cannot be easily processed by kernels.
+  int filter_buffer_index;
+#endif
 };
 
 extern const int kFullyConnectedInputTensor;
@@ -60,15 +68,15 @@ TfLiteStatus CalculateOpDataFullyConnected(
     TfLiteType data_type, const TfLiteTensor* input, const TfLiteTensor* filter,
     const TfLiteTensor* bias, TfLiteTensor* output, OpDataFullyConnected* data);
 
-// This is the most generic TfLiteRegistration. The actual supported types may
-// still be target dependent. The only requirement is that every implementation
-// (reference or optimized) must define this function.
-TfLiteRegistration Register_FULLY_CONNECTED();
+// This is the most generic TFLMRegistration. The actual supported types
+// may still be target dependent. The only requirement is that every
+// implementation (reference or optimized) must define this function.
+TFLMRegistration Register_FULLY_CONNECTED();
 
-#if defined(CMSIS_NN) || defined(HEXAGON)
-// Returns a TfLiteRegistration struct for kernel variant that only supports
+#if defined(CMSIS_NN) || defined(HEXAGON) || defined(XTENSA)
+// Returns a TFLMRegistration struct for kernel variant that only supports
 // int8.
-TfLiteRegistration Register_FULLY_CONNECTED_INT8();
+TFLMRegistration Register_FULLY_CONNECTED_INT8();
 
 #else
 // Note that while this block gets used for both reference and optimized kernels
@@ -76,16 +84,20 @@ TfLiteRegistration Register_FULLY_CONNECTED_INT8();
 // define fallback implementation that allow reference kernels to still be used
 // from applications that call a more specific kernel variant.
 
-inline TfLiteRegistration Register_FULLY_CONNECTED_INT8() {
+inline TFLMRegistration Register_FULLY_CONNECTED_INT8() {
   return Register_FULLY_CONNECTED();
 }
 
 #endif
 
 #if defined(CMSIS_NN)
-// Returns a TfLiteRegistration struct for kernel variant that only supports
+// Returns a TFLMRegistration struct for kernel variant that only supports
 // int16.
-TfLiteRegistration Register_FULLY_CONNECTED_INT16();
+TFLMRegistration Register_FULLY_CONNECTED_INT16();
+
+// Returns a TFLMRegistration struct for kernel variant that only supports
+// int8 and int4 packed kernels.
+TFLMRegistration Register_FULLY_CONNECTED_INT4();
 
 #else
 // Note that while this block gets used for both reference and optimized kernels
@@ -93,7 +105,11 @@ TfLiteRegistration Register_FULLY_CONNECTED_INT16();
 // define fallback implementation that allow reference kernels to still be used
 // from applications that call a more specific kernel variant.
 
-inline TfLiteRegistration Register_FULLY_CONNECTED_INT16() {
+inline TFLMRegistration Register_FULLY_CONNECTED_INT16() {
+  return Register_FULLY_CONNECTED();
+}
+
+inline TFLMRegistration Register_FULLY_CONNECTED_INT4() {
   return Register_FULLY_CONNECTED();
 }
 

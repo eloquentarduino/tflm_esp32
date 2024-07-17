@@ -21,16 +21,35 @@ limitations under the License.
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
+#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/internal/types.h"
 #include "tensorflow/lite/micro/micro_context.h"
 
 namespace tflite {
 namespace micro {
 
-TfLiteRegistration RegisterOp(
+TFLMRegistration RegisterOp(
     void* (*init)(TfLiteContext* context, const char* buffer, size_t length),
     TfLiteStatus (*prepare)(TfLiteContext* context, TfLiteNode* node),
-    TfLiteStatus (*invoke)(TfLiteContext* context, TfLiteNode* node));
+    TfLiteStatus (*invoke)(TfLiteContext* context, TfLiteNode* node),
+    void (*free)(TfLiteContext* context, void* buffer) = nullptr,
+    void (*reset)(TfLiteContext* context, void* buffer) = nullptr);
+
+TFLMInferenceRegistration RegisterOp(
+    TfLiteStatus (*invoke)(TfLiteContext* context, TfLiteNode* node),
+    void (*reset)(TfLiteContext* context, void* buffer) = nullptr);
+
+// Prints out n bytes in a int8_t buffer as hex
+void PrintNBytes(const int8_t* tensor_data, int n_bytes,
+                 const char* prefix = nullptr);
+
+// Prints out the n bytes in a TfLiteEvalTensor as hex
+void PrintNBytes(const TfLiteEvalTensor* tensor, int n_bytes,
+                 const char* prefix = nullptr);
+
+// Prints out n bytes in a TfLiteTensor as hex
+void PrintNBytes(const TfLiteTensor* tensor, int n_bytes,
+                 const char* prefix = nullptr);
 
 // Returns a mutable tensor for a given input index. is_variable must be checked
 // during prepare when the full TfLiteTensor is available.
@@ -117,6 +136,14 @@ TfLiteStatus CopySubgraphOutputsToOpOutputs(TfLiteContext* context,
                                             MicroGraph* graph_info,
                                             int subgraph_idx);
 
+// If tensor is INT4, make a new TfLiteEvalTensor with data unpacked into
+// a scratch buffer. The returned tensor will have the kTfLiteInt8 type.
+// Assume scratch buffer is previously requested in Prepare, and
+// scratch_buffer_index can be used to retrieve that buffer.
+// If the tensor is not INT4, a shallow copy is returned.
+TfLiteEvalTensor MakeUnpackedInt4Tensor(TfLiteContext* context,
+                                        int scratch_buffer_index,
+                                        const TfLiteEvalTensor* tensor);
 }  // namespace micro
 }  // namespace tflite
 

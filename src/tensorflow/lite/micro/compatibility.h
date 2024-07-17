@@ -24,7 +24,7 @@ limitations under the License.
 // the private section.
 #ifdef TF_LITE_STATIC_MEMORY
 #define TF_LITE_REMOVE_VIRTUAL_DELETE \
-  void operator delete(void* p) {}
+  // void operator delete(void* p) {}
 #else
 #define TF_LITE_REMOVE_VIRTUAL_DELETE
 #endif

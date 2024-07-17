@@ -15,6 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 
+#include <algorithm>
+
 #include "tensorflow/lite/kernels/internal/common.h"
 
 namespace tflite {
@@ -61,8 +63,10 @@ inline void ConvPerChannel(
   const int filter_width = filter_shape.Dims(2);
   const int filter_input_depth = filter_shape.Dims(3);
   const int groups = input_depth / filter_input_depth;
+  TFLITE_DCHECK_NE(groups, 0);
   TFLITE_DCHECK_EQ(input_depth % filter_input_depth, 0);
   const int filters_per_group = output_depth / groups;
+  TFLITE_DCHECK_NE(filters_per_group, 0);
   const int output_height = output_shape.Dims(1);
   const int output_width = output_shape.Dims(2);
   for (int batch = 0; batch < batches; ++batch) {
@@ -130,6 +134,7 @@ inline void ConvPerChannel(
     }
   }
 }
+
 
 // Fixed-point per-channel-quantization convolution reference kernel.
 // 16-bit data and 8-bit filter

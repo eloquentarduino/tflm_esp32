@@ -20,6 +20,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/op_macros.h"
 #include "tensorflow/lite/micro/kernels/kernel_util.h"
+#include "tensorflow/lite/micro/micro_log.h"
 #include "tensorflow/lite/micro/micro_utils.h"
 
 namespace tflite {
@@ -29,7 +30,7 @@ constexpr int kInputTensor = 0;
 constexpr int kSizeTensor = 1;
 constexpr int kOutputTensor = 0;
 
-TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus ResizeBilinearPrepare(TfLiteContext* context, TfLiteNode* node) {
   MicroContext* micro_context = GetMicroContext(context);
 
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
@@ -55,8 +56,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   auto* params =
       reinterpret_cast<TfLiteResizeBilinearParams*>(node->builtin_data);
   if (params->half_pixel_centers && params->align_corners) {
-    TF_LITE_KERNEL_LOG(
-        context, "If half_pixel_centers is True, align_corners must be False.");
+    MicroPrintf("If half_pixel_centers is True, align_corners must be False.");
     return kTfLiteError;
   }
 
@@ -66,7 +66,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   return kTfLiteOk;
 }
 
-TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+TfLiteStatus ResizeBilinearEval(TfLiteContext* context, TfLiteNode* node) {
   auto* params =
       reinterpret_cast<TfLiteResizeBilinearParams*>(node->builtin_data);
 
@@ -100,8 +100,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
         tflite::micro::GetTensorShape(output),
         tflite::micro::GetTensorData<int8_t>(output));
   } else {
-    TF_LITE_KERNEL_LOG(context, "Output type is %d, requires float or int8.",
-                       output->type);
+    MicroPrintf("Output type is %d, requires float or int8.", output->type);
     return kTfLiteError;
   }
 
@@ -110,8 +109,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 
 }  // namespace
 
-TfLiteRegistration Register_RESIZE_BILINEAR() {
-  return tflite::micro::RegisterOp(nullptr, Prepare, Eval);
+TFLMRegistration Register_RESIZE_BILINEAR() {
+  return tflite::micro::RegisterOp(nullptr, ResizeBilinearPrepare,
+                                   ResizeBilinearEval);
 }
 
 }  // namespace tflite

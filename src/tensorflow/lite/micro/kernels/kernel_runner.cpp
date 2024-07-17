@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "tensorflow/lite/micro/kernels/kernel_runner.h"
 
-#include "tensorflow/lite/micro/arena_allocator/simple_memory_allocator.h"
+#include "tensorflow/lite/micro/arena_allocator/single_arena_buffer_allocator.h"
 #include "tensorflow/lite/micro/micro_arena_constants.h"
-#include "tensorflow/lite/micro/micro_error_reporter.h"
+#include "tensorflow/lite/micro/micro_log.h"
 #include "tensorflow/lite/micro/test_helpers.h"
 
 namespace tflite {
@@ -27,14 +27,21 @@ namespace micro {
 constexpr int KernelRunner::kKernelRunnerBufferSize_;
 uint8_t KernelRunner::kKernelRunnerBuffer_[];
 
-KernelRunner::KernelRunner(const TfLiteRegistration& registration,
+void ClearBufferApi(TfLiteContext* context_) {
+  context_->GetScratchBuffer = nullptr;
+  context_->GetExternalContext = nullptr;
+  context_->AllocatePersistentBuffer = nullptr;
+  context_->RequestScratchBufferInArena = nullptr;
+}
+
+KernelRunner::KernelRunner(const TFLMRegistration& registration,
                            TfLiteTensor* tensors, int tensors_size,
                            TfLiteIntArray* inputs, TfLiteIntArray* outputs,
-                           void* builtin_data, TfLiteIntArray* intermediates)
+                           const void* builtin_data,
+                           TfLiteIntArray* intermediates)
     : registration_(registration),
-      allocator_(SimpleMemoryAllocator::Create(GetMicroErrorReporter(),
-                                               kKernelRunnerBuffer_,
-                                               kKernelRunnerBufferSize_)),
+      allocator_(SingleArenaBufferAllocator::Create(kKernelRunnerBuffer_,
+                                                    kKernelRunnerBufferSize_)),
       mock_micro_graph_(allocator_),
       fake_micro_context_(tensors, allocator_, &mock_micro_graph_) {
   // Prepare TfLiteContext:
@@ -43,17 +50,15 @@ KernelRunner::KernelRunner(const TfLiteRegistration& registration,
   context_.recommended_num_threads = 1;
   context_.GetTensor = MicroContextGetTensor;
   context_.GetEvalTensor = MicroContextGetEvalTensor;
+  tflite::micro::ClearBufferApi(&context_);
   context_.AllocatePersistentBuffer = MicroContextAllocatePersistentBuffer;
-  context_.RequestScratchBufferInArena =
-      MicroContextRequestScratchBufferInArena;
-  context_.GetScratchBuffer = MicroContextGetScratchBuffer;
 
   context_.recommended_num_threads = 0;
 
   // Prepare TfLiteNode:
   node_.inputs = inputs;
   node_.outputs = outputs;
-  node_.builtin_data = builtin_data;
+  node_.builtin_data = const_cast<void*>(builtin_data);
   node_.intermediates = intermediates;
 }
 
@@ -64,12 +69,19 @@ bool KernelRunner::ValidateTempBufferDeallocated() {
 TfLiteStatus KernelRunner::InitAndPrepare(const char* init_data,
                                           size_t length) {
   if (registration_.init) {
+    tflite::micro::ClearBufferApi(&context_);
+    context_.AllocatePersistentBuffer = MicroContextAllocatePersistentBuffer;
     node_.user_data = registration_.init(&context_, init_data, length);
   }
 
   TF_LITE_ENSURE(&context_, ValidateTempBufferDeallocated());
 
   if (registration_.prepare) {
+    tflite ::micro::ClearBufferApi(&context_);
+    context_.AllocatePersistentBuffer = MicroContextAllocatePersistentBuffer;
+    context_.RequestScratchBufferInArena =
+        MicroContextRequestScratchBufferInArena;
+    context_.GetExternalContext = MicroContextGetExternalContext;
     TF_LITE_ENSURE_STATUS(registration_.prepare(&context_, &node_));
   }
 
@@ -79,8 +91,11 @@ TfLiteStatus KernelRunner::InitAndPrepare(const char* init_data,
 }
 
 TfLiteStatus KernelRunner::Invoke() {
+  tflite::micro::ClearBufferApi(&context_);
+  context_.GetScratchBuffer = MicroContextGetScratchBuffer;
+
   if (registration_.invoke == nullptr) {
-    MicroPrintf("TfLiteRegistration missing invoke function pointer!");
+    MicroPrintf("TFLMRegistration missing invoke function pointer!");
     return kTfLiteError;
   }
 
@@ -91,5 +106,30 @@ TfLiteStatus KernelRunner::Invoke() {
   return kTfLiteOk;
 }
 
+TfLiteStatus KernelRunner::Reset() {
+  tflite::micro::ClearBufferApi(&context_);
+  context_.GetScratchBuffer = MicroContextGetScratchBuffer;
+
+  if (registration_.reset == nullptr) {
+    MicroPrintf("TFLMRegistration missing reset function pointer!");
+    return kTfLiteError;
+  }
+
+  registration_.reset(&context_, node_.user_data);
+  return kTfLiteOk;
+}
+
+TfLiteStatus KernelRunner::Free() {
+  tflite::micro::ClearBufferApi(&context_);
+  context_.GetScratchBuffer = MicroContextGetScratchBuffer;
+
+  if (registration_.free == nullptr) {
+    MicroPrintf("TFLMRegistration missing free function pointer!");
+    return kTfLiteError;
+  }
+
+  registration_.free(&context_, node_.user_data);
+  return kTfLiteOk;
+}
 }  // namespace micro
 }  // namespace tflite

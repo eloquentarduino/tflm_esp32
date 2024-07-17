@@ -21,13 +21,16 @@ limitations under the License.
 #include <complex>
 #include <limits>
 #include <memory>
-#ifndef TF_LITE_STATIC_MEMORY
+
+#if 0  // was #ifndef TF_LITE_STATIC_MEMORY
 #include <string>
+
+#include "tensorflow/lite/array.h"
 #endif  // TF_LITE_STATIC_MEMORY
 
-#include "tensorflow/lite/c/builtin_op_data.h"
-#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/context_util.h"
+#include "tensorflow/lite/core/c/builtin_op_data.h"
+#include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/kernels/internal/cppmath.h"
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
 
@@ -149,7 +152,7 @@ const TfLiteTensor* GetOptionalInputTensor(const TfLiteContext* context,
   return GetInput(context, node, index);
 }
 
-#ifndef TF_LITE_STATIC_MEMORY
+#if 0  // was #ifndef TF_LITE_STATIC_MEMORY
 TfLiteTensor* GetTemporary(TfLiteContext* context, const TfLiteNode* node,
                            int index) {
   const int tensor_index = ValidateTensorIndexing(
@@ -236,7 +239,8 @@ TfLiteStatus PopulateConvolutionQuantizationParams(
     //  Currently only Int8/Int16 is supported for per channel quantization.
     TF_LITE_ENSURE(context,
                    input->type == kTfLiteInt8 || input->type == kTfLiteInt16);
-    TF_LITE_ENSURE_EQ(context, filter->type, kTfLiteInt8);
+    TF_LITE_ENSURE(context,
+                   filter->type == kTfLiteInt8 || filter->type == kTfLiteInt4);
     TF_LITE_ENSURE_EQ(context, affine_quantization->scale->size, num_channels);
     TF_LITE_ENSURE_EQ(
         context, num_channels,
@@ -410,7 +414,7 @@ bool HaveSameShapes(const TfLiteTensor* input1, const TfLiteTensor* input2) {
   return TfLiteIntArrayEqual(input1->dims, input2->dims);
 }
 
-#ifndef TF_LITE_STATIC_MEMORY
+#if 0  // was #ifndef TF_LITE_STATIC_MEMORY
 TfLiteStatus GetOutputShapeFromInput(TfLiteContext* context,
                                      const TfLiteTensor* input,
                                      TfLiteIntArray** output_shape) {
@@ -421,8 +425,7 @@ TfLiteStatus GetOutputShapeFromInput(TfLiteContext* context,
     return kTfLiteError;
   }
   const int output_dims = SizeOfDimension(input, 0);
-  std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> shape(
-      TfLiteIntArrayCreate(output_dims), TfLiteIntArrayFree);
+  IntArrayUniquePtr shape(TfLiteIntArrayCreate(output_dims));
   for (int i = 0; i < output_dims; i++) {
     shape->data[i] = input->data.i32[i];
   }
@@ -435,7 +438,7 @@ TfLiteStatus GetOutputShapeFromInput(TfLiteContext* context,
 // that build. What appears to be happening is that while the linker drops the
 // unsused function, the string library that gets pulled in is not dropped,
 // resulting in the increased binary size.
-const std::string GetShapeDebugString(const TfLiteIntArray* shape) {
+std::string GetShapeDebugString(const TfLiteIntArray* shape) {
   std::string str;
   for (int d = 0; d < shape->size; ++d) {
     if (str.empty())
@@ -461,8 +464,7 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
   const int dims2 = NumDimensions(input2);
   const int out_dims = std::max(dims1, dims2);
 
-  std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> shape(
-      TfLiteIntArrayCreate(out_dims), TfLiteIntArrayFree);
+  IntArrayUniquePtr shape(TfLiteIntArrayCreate(out_dims));
   for (int i = 0; i < out_dims; ++i) {
     const int d1 = i >= dims1 ? 1 : SizeOfDimension(input1, dims1 - i - 1);
     const int d2 = i >= dims2 ? 1 : SizeOfDimension(input2, dims2 - i - 1);
@@ -493,8 +495,7 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
   const int dims2 = NumDimensions(input2);
   const int dims3 = NumDimensions(input3);
   const int out_dims = std::max(std::max(dims1, dims2), dims3);
-  std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> shape(
-      TfLiteIntArrayCreate(out_dims), TfLiteIntArrayFree);
+  IntArrayUniquePtr shape(TfLiteIntArrayCreate(out_dims));
   for (int i = 0; i < out_dims; ++i) {
     const int d1 = i >= dims1 ? 1 : SizeOfDimension(input1, dims1 - i - 1);
     const int d2 = i >= dims2 ? 1 : SizeOfDimension(input2, dims2 - i - 1);
@@ -571,16 +572,15 @@ int TfLiteTypeGetSize(TfLiteType type) {
 bool IsMobilePlatform() {
 #if defined(ANDROID) || defined(__ANDROID__)
   return true;
-#elif defined(__APPLE__)
-#if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#elif defined(__APPLE__) && (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE)
   return true;
-#endif
-#endif
+#else
   return false;
+#endif
 }
 
 bool HasUnspecifiedDimension(const TfLiteTensor* tensor) {
-#ifndef TF_LITE_STATIC_MEMORY
+#if 0  // was #ifndef TF_LITE_STATIC_MEMORY
   if (tensor->dims_signature) {
     for (int i : TfLiteIntArrayView(tensor->dims_signature)) {
       if (i == -1) return true;
